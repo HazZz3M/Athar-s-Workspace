@@ -3,7 +3,6 @@
 -- Models the "Main MSMEs" Google Sheet as normalized tables:
 --   intake -> projects + people -> screening -> interviews
 --          -> round enrollment -> sessions & attendance
--- NOT APPLIED YET. Review before running.
 -- =====================================================================
 
 create extension if not exists citext with schema extensions;
