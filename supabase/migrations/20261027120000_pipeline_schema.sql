@@ -6,7 +6,7 @@
 -- NOT APPLIED YET. Review before running.
 -- =====================================================================
 
-create extension if not exists citext;
+create extension if not exists citext with schema extensions;
 
 -- ---------------------------------------------------------------------
 -- 1. Enums (fixed workflow states)
@@ -109,7 +109,7 @@ create table public.staff (
 --    Return NULL instead of failing on malformed IDs.
 -- ---------------------------------------------------------------------
 create function public.nid_birthdate(nid text)
-returns date language plpgsql immutable as $$
+returns date language plpgsql immutable set search_path = '' as $$
 begin
   if nid !~ '^[23][0-9]{13}$' then return null; end if;
   return make_date(
@@ -121,14 +121,14 @@ exception when others then
 end $$;
 
 create function public.nid_gender(nid text)
-returns public.gender language sql immutable as $$
+returns public.gender language sql immutable set search_path = '' as $$
   select case when nid ~ '^[0-9]{14}$'
               then case when substr(nid, 13, 1)::int % 2 = 1 then 'male' else 'female' end::public.gender
          end
 $$;
 
 create function public.nid_governorate(nid text)
-returns smallint language sql immutable as $$
+returns smallint language sql immutable set search_path = '' as $$
   select case when nid ~ '^[0-9]{14}$' then substr(nid, 8, 2)::smallint end
 $$;
 
@@ -140,7 +140,7 @@ create table public.people (
   national_id                text unique,
   full_name_ar               text not null,
   phone                      text check (phone ~ '^01[0-9]{9}$'),
-  email                      citext,
+  email                      extensions.citext,
   residence_governorate_code smallint references public.governorates(code),
   residence_district_id      bigint references public.districts(id),
   -- derived from the national ID (replaces the sheet's GOV / Birthdate / Gender formulas)
@@ -344,7 +344,7 @@ create index on public.project_status_events (project_id, changed_at);
 -- 10. Triggers
 -- ---------------------------------------------------------------------
 create function public.touch_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   new.updated_at := now();
   return new;
@@ -354,7 +354,7 @@ create trigger people_touch   before update on public.people   for each row exec
 create trigger projects_touch before update on public.projects for each row execute function public.touch_updated_at();
 
 create function public.log_project_status()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   if tg_op = 'INSERT' or new.status is distinct from old.status then
     insert into public.project_status_events (project_id, from_status, to_status)
@@ -368,7 +368,7 @@ create trigger projects_status_log after insert or update of status on public.pr
 
 -- R_<round>_TR<nnn>, numbered per round in selection order
 create function public.set_enrollment_code()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 declare
   rnum smallint;
   seq  int;
