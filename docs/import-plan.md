@@ -1,6 +1,6 @@
 # Import plan: Main MSMEs sheet → Supabase
 
-Status: **scripts built (`scripts/import/`), local rehearsal passed, nothing loaded into Supabase yet.**
+Status: **loaded into Supabase on 2026-10-27** through a staging schema (§4b). Every table holds exactly the expected row count, and the staging schema has been dropped.
 Decisions taken: add `project_members.notes` and `prior_participations.birthdate`; Counters round → program map with References dates; the four source/referral labels added as non-disqualifying issues; conflicting national IDs kept on the first slot only.
 Source: Google Sheet "Main MSMEs" (`1KARk6a0UVheuS2yzcLJD8zmyLXz_WnOHEuj4eSCAeBw`).
 Target: Supabase project `bupgddkyfugczweqiotc`, schema from `supabase/migrations/`.
@@ -125,7 +125,36 @@ Steps 4–5 read `SUPABASE_DB_URL` from `.env` at the repo root (Project Setting
 
 **Counts from the rehearsal:** projects 1,102 · intake_submissions 1,102 · people 2,361 · project_members 2,486 · contact_attempts 1,466 · screening_reviews 661 · project_issues 349 · interviews 351 · round_enrollments 558 · round_participants 996 · prior_participations 3,739. The 7 Ready to Attend rows that aren't loaded belong to the 2 projects accepted without a round. The dry run checks these against the sheet's own totals (1,102 outreach / 1,003 in rounds).
 
-## 5. Decisions needed before building the loader
+## 4b. How the load was actually done
+
+`SUPABASE_DB_URL` was never set in `.env`, so steps 4–5 above weren't used. The data went in through a temporary `staging` schema instead. Each step is checked with an md5 fingerprint, so nothing reaches the real tables unless every chunk arrived intact.
+
+1. **Staging objects**: `staging.sql` creates schema `staging` (no access for `anon` / `authenticated`), table `staging.chunks (tbl, n, rows jsonb)`, view `staging.chunk_fingerprints` and function `staging.run_import(dry_run)`.
+   - Fingerprint: md5 of every cell as text, nulls as `∅`, joined with `|` in row/column order.
+   - `run_import` inserts into the public tables from the chunks in dependency order, resets the identity and `project_code_seq` sequences and builds a report (tables expected vs inserted, checks, funnel, rounds).
+   - It raises `IMPORT FAILED` on any count mismatch. With `dry_run = true` it always raises `DRY RUN OK (rolled back): <report>`, so nothing is kept.
+2. **Chunk files**: `node stage-chunks.mjs` splits `data/out/import.json` into 41 files of positional JSON arrays in `data/out/chunks/` (≤ 40,000 chars each), plus `manifest.json` with the expected row count and fingerprint per chunk. Combining marks, format characters and unusual spaces (NBSP etc.) are written as `\uXXXX` so they survive copying; the values don't change.
+3. **Local rehearsal**: `node rehearse-staging.mjs` runs the same objects on pglite. All 41 fingerprints matched and the dry run passed.
+4. **Upload**: the first 18 chunks were inserted through the Supabase MCP connection. The other 23 were uploaded with `node upload-chunks.mjs`, which:
+   - asks only for the Athar database password and never echoes it;
+   - can only connect to project `bupgddkyfugczweqiotc`, trying the session pooler first and then the direct host;
+   - skips chunks that are already staged and finishes by checking all 41 fingerprints against the manifest.
+
+   If a chunk mismatches, `node diff-chunk.mjs <chunk.sql> <remote.json>` finds the differing rows.
+5. **Dry run**: `select staging.run_import(true);` passed with every table count equal to the expected count.
+6. **Load**: `select staging.run_import(false);` run in the SQL Editor, then `drop schema staging cascade;`.
+
+**Loaded counts:** people 2,361 · projects 1,102 · intake_submissions 1,102 · project_members 2,486 · contact_attempts 1,466 · screening_reviews 661 · project_issues 349 · interviews 351 · round_enrollments 558 · round_participants 996 · prior_participations 3,739.
+
+**Funnel (projects / members):** enrolled 558 / 1,000 · rejected 324 / 879 · waiting 100 / 271 · new 45 / 117 · interviewing 34 / 101 · withdrawn 18 / 47 · screening 12 / 38 · needs_update 9 / 26 · accepted 2 / 7.
+
+**Data gaps carried over from the sheet:** 926 projects without a district, 368 without a stage, 35 without a sector; 247 people with a missing or invalid national ID; 94 of 3,739 prior participations linked to a person.
+
+**Advisors after the load:** no new findings.
+- Security: `staff_role()` is callable by signed-in users, which is intended because RLS uses it. `rls_auto_enable()` is callable by `anon`; it isn't in our migrations.
+- Performance: 30 unused-index notices, expected until an app queries the data.
+
+## 5. Decisions (taken)
 
 1. **Small schema addition** (one migration): `project_members.notes` (199 projects have different notes per member) and `prior_participations.birthdate` (needed for the OLD beneficiaries match).
 2. **Round → program and dates.** Counters maps MSME Incubator → Rounds 01, 03, 04, 06; Startup Sprint → 02, 05, 07; Sustainable Fashion → 08; Agribusiness → 09; E-commerce → 10. References lists dates per round (e.g. R1 04 Apr–02 May, R9 18 Sep–10 Oct), but its program/capacity list doesn't line up with Counters. Which is right?
