@@ -1,0 +1,19 @@
+{
+  "name": "athar-sheet-import",
+  "private": true,
+  "type": "module",
+  "description": "Import the Main MSMEs Google Sheet into Supabase. See docs/import-plan.md.",
+  "scripts": {
+    "extract": "node extract.mjs",
+    "transform": "node transform.mjs",
+    "rehearse": "node load.mjs --target=pglite --dry-run",
+    "dry-run": "node --env-file=../../.env load.mjs --target=supabase --dry-run",
+    "load": "node --env-file=../../.env load.mjs --target=supabase"
+  },
+  "dependencies": {
+    "postgres": "3.4.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.2.17"
+  }
+}

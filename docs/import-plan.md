@@ -1,6 +1,7 @@
 # Import plan: Main MSMEs sheet → Supabase
 
-Status: **draft for review, nothing loaded yet.**
+Status: **scripts built (`scripts/import/`), local rehearsal passed, nothing loaded into Supabase yet.**
+Decisions taken: add `project_members.notes` and `prior_participations.birthdate`; Counters round → program map with References dates; the four source/referral labels added as non-disqualifying issues; conflicting national IDs kept on the first slot only.
 Source: Google Sheet "Main MSMEs" (`1KARk6a0UVheuS2yzcLJD8zmyLXz_WnOHEuj4eSCAeBw`).
 Target: Supabase project `bupgddkyfugczweqiotc`, schema from `supabase/migrations/`.
 
@@ -17,7 +18,7 @@ Target: Supabase project `bupgddkyfugczweqiotc`, schema from `supabase/migration
 
 **Not imported:** Counters, Reporting, HIDDEN REPORT, Waiting (replaced by views), GWLA 2025 leads, Hack, Sheet27, New Project, and the empty AI-hackathon community tab. The Payment column (empty) and the "ATHAR 2026" tag are skipped. **Attendance is not in this sheet**: Reporting reads it from per-round files, so `sessions`/`attendance` stay empty for now.
 
-Why Total Responces and not Main: Main builds its `DAAP###` code by *project name*, so the 12 project names used more than once (28 rows) collapse into 9 fewer projects there (1,093 vs 1,102). Importing per Total Responces row keeps them apart; Main's operational data is then matched back by project name + member national ID.
+Why Total Responces and not Main: Main builds its `DAAP###` code by *project name*, so the 12 project names used more than once (28 rows) collapse into 9 fewer projects there (1,093 vs 1,102). Importing per Total Responces row keeps them apart. Main lists exactly 10 slots per Total Responces row in the same order (verified for all 11,020 rows), so its operational data is joined **by position**: Main data row *i* = Total Responces row ⌊(i−1)/10⌋, slot (i−1) mod 10. The transform re-checks this and stops if the two ever drift apart.
 
 ## 2. Field mapping
 
@@ -49,11 +50,13 @@ Why Total Responces and not Main: Main builds its `DAAP###` code by *project nam
 | Main Notes (per member) | `project_members.notes` | **new column**, see §5 |
 | Main Confirmation (team) | `project_members.confirmation` | copied to every member of the team |
 
-**De-duplicating people** by national ID (2,151 distinct valid IDs):
-- Same ID, same name, different submissions (180 IDs) → **one person**, several memberships.
-- Same ID given to different names inside one team (55 IDs, usually the leader's ID copied) → first slot keeps the ID; the others are created **without** an ID and listed in the import report.
-- Same ID, different names, different projects (11 IDs) → same treatment.
-- Altogether 146 member slots lose their ID this way. 47 members have no ID at all; 6 have an ID but no name (name set to "—" and reported).
+**De-duplicating people** by national ID. Two names count as the same person when one equals the other or is a shorter form of it (after unifying أ/إ/آ, ة/ه, ى/ي); a different third name means a different person.
+- Same ID + same name in another submission → **one person**, several memberships (358 slots).
+- Same ID + same name repeated inside one team (the leader filling several slots with their own details) → the repeat slot is **skipped** (233 slots). Ready to Attend never lists these twice either.
+- Same ID, different name, same team (108 slots) or another project (26 slots) → that member is created **without** an ID and listed in the report.
+- 47 members have no ID; 30 IDs are kept but aren't valid 14-digit IDs; 6 members have an ID but no name (name set to "—").
+
+Result: 2,719 slots → 2,486 memberships of 2,361 people.
 
 ### Screening, interviews, selection ← Main (team-level values on each project's first row)
 
@@ -64,7 +67,7 @@ Why Total Responces and not Main: Main builds its `DAAP###` code by *project nam
 | Number of Action | `contact_attempts.notes` | "imported: N actions" (individual attempts weren't recorded) |
 | Shoruk - Validation | `screening_reviews` | Done → done, Waiting → waiting, Need to Update → needs_update |
 | Team Issues | `project_issues` | comma-separated, matched to `screening_issues`; 4 extra labels need a decision (§5) |
-| Interview date + Time | `interviews.scheduled_at` | Cairo time; status `done` when a selection exists, otherwise `scheduled` |
+| Interview date + Time | `interviews.scheduled_at` | Cairo time. Times were typed without AM/PM: 1:00–7:00 are read as 13:00–19:00 (204), 0:00 means no time and becomes 12:00 (97). Status `done` when a selection exists, otherwise `scheduled` |
 | Selection | `interviews.decision` | Accepted / Rejected / Waiting |
 | Reasons? | `interviews.reasons` | as-is |
 | Round | `round_enrollments` | see below |
@@ -74,15 +77,15 @@ Why Total Responces and not Main: Main builds its `DAAP###` code by *project nam
 
 - Rounds 01–09 of 2026 are created (Round 10 has no projects yet). Dates come from References, programs from the Counters round map — **please confirm, §5**.
 - Every project with a Round becomes a `round_enrollment` (558). Ready to Attend's round agrees with Main for all 1,003 rows. Codes are regenerated by the trigger in the same order, so they'll match `R_05_TR001`-style codes from the sheet.
-- Every Ready to Attend row becomes a `round_participant` (1,003), matched to people by national ID (996), else by name within the project (7).
+- Every Ready to Attend row becomes a `round_participant`, matched to people by national ID, else by name within the project. 996 load; the other 7 belong to the 2 projects accepted without a round.
 
 ### prior_participations ← OLD beneficiaries
 
 The tab holds two lists side by side:
 - **Columns A–G** (Athar 2025 rounds, ~720 rows): project, name, phone, national ID, Kobo code, New/Referral, round label → organization Athar, year 2025.
-- **Columns I–L** (all orgs, 2,967 rows): name, Kobo code, birthdate+phone key, organization (Athar, Entlaq, ICE Alex, Superfny). The key is split into birthdate + phone. **New column `birthdate`**, see §5.
+- **Columns I–L** (all orgs, 2,967 rows): name, Kobo code, "DOP+PHONE" key, organization (Athar, Entlaq, ICE Alex, Superfny). The key is DDMMYYYY + **digits 7–9** of the 11-digit phone (checked against all 45 of the sheet's own "New Org" matches), so only the birthdate is stored; the phone stays empty. The Kobo code also embeds the birthdate: `<digit><initials><digit><DDMMYYYY><3 digits>`.
 
-People are linked by national ID, otherwise by birthdate + phone (the same match the sheet's "New Org" column uses).
+People are linked by national ID, otherwise by birthdate + phone digits 7–9 (the same match the sheet's "New Org" column uses). The Main ORG column adds one row per member that has it; "New Org" is skipped because it is a lookup into this same list.
 
 ## 3. Project status rules
 
@@ -110,14 +113,17 @@ The status trigger records one history event per project at import time; `change
 
 ## 4. How the load runs
 
-1. **Extract**: pull the needed ranges through the Google Sheets connection into `data/raw/*.json`. The `data/` folder is gitignored; it holds national IDs and phone numbers and never gets committed.
-2. **Transform**: `scripts/import/transform.mjs` (pure, re-runnable) applies the rules above and writes `data/out/*.json` plus `data/out/import-report.md`. The report lists every conflict by sheet row number, with no names or IDs.
-3. **Dry run**: `scripts/import/load.mjs --dry-run` inserts everything in one transaction, prints row counts per table and the `v_funnel` result, then **rolls back**.
-4. **Load**: the same command without `--dry-run` commits. It refuses to run if `projects` already has rows, so it can't double-import.
+All commands run from `scripts/import/` (`npm install` once).
 
-The loader connects with a Postgres connection string you put in a local `.env` file (`SUPABASE_DB_URL=…`, from Project Settings → Database). I won't handle that string myself. Sending ~2 MB of personal data row by row through chat tools would be slow and would copy it into the conversation.
+1. **Extract**: a Sheets API `spreadsheets.get` dump of the needed ranges (with `formattedValue`) → `node extract.mjs <dump.json>` → `data/raw/sheets.json`. The `data/` folder is gitignored; it holds national IDs and phone numbers and never gets committed.
+2. **Transform**: `npm run transform` applies the rules above and writes `data/out/import.json` plus `data/out/import-report.md`. The report lists every conflict by sheet row number, with no names or IDs.
+3. **Rehearse**: `npm run rehearse` builds an in-memory Postgres from `supabase/migrations/`, loads everything, prints checks and rolls back.
+4. **Dry run on Supabase**: `npm run dry-run`, the same against the real database, rolled back.
+5. **Load**: `npm run load` commits. It refuses to run if `projects` already has rows, so it can't double-import.
 
-**Expected counts after load:** projects 1,102 · project_members 2,719 · round_enrollments 558 · round_participants 1,003 · interviews 351 · screening_reviews 661 · contact_attempts ≈ 1,390 (936 calls + 452 WhatsApp). People will be roughly 2,350–2,550 depending on how many repeat members share an ID; the transform prints the exact number. prior_participations ≈ 3,700. The dry run checks these against the sheet's own totals (1,102 outreach / 1,003 in rounds).
+Steps 4–5 read `SUPABASE_DB_URL` from `.env` at the repo root (Project Settings → Database → connection string). Sending ~3 MB of personal data row by row through chat tools would be slow and would copy it into the conversation, so the loader connects directly.
+
+**Counts from the rehearsal:** projects 1,102 · intake_submissions 1,102 · people 2,361 · project_members 2,486 · contact_attempts 1,466 · screening_reviews 661 · project_issues 349 · interviews 351 · round_enrollments 558 · round_participants 996 · prior_participations 3,739. The 7 Ready to Attend rows that aren't loaded belong to the 2 projects accepted without a round. The dry run checks these against the sheet's own totals (1,102 outreach / 1,003 in rounds).
 
 ## 5. Decisions needed before building the loader
 
