@@ -1,6 +1,8 @@
 node_modules/
 .env
 .env.*
+!.env.example
+dist/
 
 # Sheet exports and import output contain personal data (national IDs, phones)
 data/
