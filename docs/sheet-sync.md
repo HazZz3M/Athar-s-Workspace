@@ -6,7 +6,8 @@ The "Main MSMEs" Google Sheet stays the raw intake source. Every 15 minutes the 
 - **New rows only.** A row counts as already imported when a project with the same submitted time and project name exists. Existing projects are never updated from the sheet, so changes made in the app are kept.
 - **Operational columns in Main are not synced.** Calls, interviews, selection and rounds are recorded in the app from now on.
 - **Source per row.** The intake tabs' timestamps decide each project's source, the same way the original import did (`docs/import-plan.md` §2).
-- **Data issues.** Rows with problems are still added. The problem is listed on the app's **Data sync** page by sheet row number, with no names or IDs. Examples: an invalid phone, a missing or invalid national ID, an ID that belongs to another person with a different name.
+- **People are matched by national ID.** A member whose ID is already in the system is linked to that person, even if the name is written differently. Such cases are listed as "ID already known under a differently written name" for review. This rule was decided on 2026-10-28; the earlier rule created a second person without an ID.
+- **Data issues.** Rows with problems are still added. The problem is listed on the app's **Data sync** page by sheet row number, with no names or IDs. Examples: an invalid phone, a missing or invalid national ID, a name that differs from the one already stored for that ID.
 
 ## Phase 2: Company Profile 2026 (interview form)
 

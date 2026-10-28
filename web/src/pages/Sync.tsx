@@ -27,6 +27,7 @@ type Issue = {
 type Check = { configured: boolean; service_account: string | null };
 
 const ISSUE_LABEL: Record<string, string> = {
+  id_name_mismatch: 'National ID already known under a differently written name (linked to that person; check the name)',
   id_conflict: 'Same national ID as another person with a different name (ID kept on the first person only)',
   duplicate_member_skipped: 'Same person listed twice in one team (second one skipped)',
   invalid_phone: 'Phone number not readable (left empty)',
