@@ -22,17 +22,18 @@ function useSave(onDone: () => void) {
   return { busy, error, run };
 }
 
-function Form({ onSubmit, busy, error, label, children }: {
-  onSubmit: () => void; busy: boolean; error: string | null; label: string; children: ReactNode;
+// `disabled` blocks submitting (nothing to save yet); `busy` means a save is running
+function Form({ onSubmit, busy, disabled = false, error, label, children }: {
+  onSubmit: () => void; busy: boolean; disabled?: boolean; error: string | null; label: string; children: ReactNode;
 }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit();
+    if (!busy && !disabled) onSubmit();
   };
   return (
     <form className="edit-form" onSubmit={submit}>
       {children}
-      <button type="submit" disabled={busy}>{busy ? 'Saving…' : label}</button>
+      <button type="submit" disabled={busy || disabled}>{busy ? 'Saving…' : label}</button>
       {error && <p className="error">{error}</p>}
     </form>
   );
@@ -45,7 +46,8 @@ export function StatusEditor({ projectId, status, onDone }: { projectId: number;
   return (
     <Form
       label="Change status"
-      busy={busy || value === status}
+      busy={busy}
+      disabled={value === status}
       error={error}
       onSubmit={() => run(() => supabase.from('projects').update({ status: value }).eq('id', projectId))}
     >
@@ -159,7 +161,7 @@ export function IssueAdder({ projectId, userId, options, onDone }: {
   const { busy, error, run } = useSave(() => { setIssue(0); onDone(); });
   if (!options.length) return null;
   return (
-    <Form label="Add issue" busy={busy || !issue} error={error}
+    <Form label="Add issue" busy={busy} disabled={!issue} error={error}
       onSubmit={() => run(() => supabase.from('project_issues').insert({ project_id: projectId, issue_id: issue, noted_by: userId }))}>
       <select value={issue} onChange={(e) => setIssue(Number(e.target.value))}>
         <option value={0}>Choose an issue…</option>
@@ -178,7 +180,7 @@ export function InterviewScheduler({ projectId, userId, onDone }: { projectId: n
   const [when, setWhen] = useState('');
   const { busy, error, run } = useSave(() => { setWhen(''); onDone(); });
   return (
-    <Form label="Schedule interview" busy={busy || !when} error={error}
+    <Form label="Schedule interview" busy={busy} disabled={!when} error={error}
       onSubmit={() => run(() => supabase.from('interviews').insert({
         project_id: projectId, scheduled_at: new Date(when).toISOString(), status: 'scheduled', interviewer_id: userId,
       }))}>
@@ -242,7 +244,7 @@ export function EnrollForm({ projectId, personIds, rounds, userId, onDone }: {
     return supabase.from('projects').update({ status: 'enrolled' }).eq('id', projectId);
   });
   return (
-    <Form label="Enroll in round" busy={busy || !round} error={error} onSubmit={enroll}>
+    <Form label="Enroll in round" busy={busy} disabled={!round} error={error} onSubmit={enroll}>
       <select value={round} onChange={(e) => setRound(Number(e.target.value))}>
         <option value={0}>Choose a round…</option>
         {rounds.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}

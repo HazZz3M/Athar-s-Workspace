@@ -485,7 +485,7 @@ function Item({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
       <dt>{label}</dt>
-      <dd dir="auto">{children || '—'}</dd>
+      <dd dir="auto">{children === null || children === undefined || children === '' ? '—' : children}</dd>
     </>
   );
 }
