@@ -51,6 +51,30 @@ Each round has its own `Attendance R_XX` sheet. The function reads its **Attenda
 
 Each round sheet also needs the service account as **Viewer**.
 
+## Phase 4: post assessments
+
+Each round has a `Post assessment R_XX` sheet (`Round_XX/01_Post Assessment`). Its ID is stored in `rounds.post_sheet_id`. Every response becomes a row in `assessment_responses`, with the 9 quiz answers, the 3 survey answers, and the sheet's own Total Score and Pass/Not.
+
+- **Same quiz, different layouts.**
+  - Every round uses the same 9 questions and the same answer key. Both are stored in `assessment_questions`.
+  - The tabs differ: some have an extra Timestamp, Answers or Form Fill Link column, and round 9 uses a new bilingual form (`Form Responses 3`).
+  - So columns are found by header text, not position. A tab without all 9 questions is skipped, such as `Reference` or round 4's `Data` export.
+- **Scores are recomputed** from the answers: 1 point per correct answer, out of 9, and pass means 6 or more, the rule in the round 8 and 9 sheets.
+  - Rounds 1–7 hold scores pasted in by hand, and a few don't follow that rule. For example, round 1 has a total of 3 labelled Pass.
+  - The sheet's values are kept in `sheet_score` and `sheet_passed` for comparison.
+- **Matching a response to a participant:**
+  1. National ID.
+  2. Kobo code.
+  3. A phone only one participant in the round has.
+  4. A name only one participant in the round has.
+  - Unmatched responses are listed on the round page, where staff can link each one to the right person. The link is kept on later syncs.
+- **Read once or on every run** (`rounds.post_source`): rounds 1–7 were read once and are now `app`; rounds 8–9 are read on every run.
+- **Effect on the indicators:**
+  - When a participant has a scored response, it decides "post assessment done / passed" for 3.2–3.4. Otherwise the attendance sheet's flags count.
+  - This gives the same 3.2 as the sheets in rounds 2–4 and 6–8. Round 1 gains one person whose pasted score was wrong.
+  - Round 5's attendance sheet has a broken Pass column (`#REF!`), so its 3.2 went from 0 to 121.
+- **Unmatched rows are logged once.** In rounds read on every run, a row that still doesn't match keeps a single open issue. The issue is resolved by itself once the row matches.
+
 ## One-time setup (Google access)
 
 1. Open https://console.cloud.google.com/ with the Google account that owns the sheet. Create a project, for example `athar-sheet-sync`.
