@@ -3,6 +3,7 @@ node_modules/
 .env.*
 !.env.example
 dist/
+.vite/
 
 # Sheet exports and import output contain personal data (national IDs, phones)
 data/
