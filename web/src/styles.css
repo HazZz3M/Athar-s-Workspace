@@ -125,6 +125,13 @@ tbody tr:last-child td { border-bottom: none; }
 .timeline .edit-form { margin-top: 0.5rem; }
 .title-row .edit-form { margin-left: auto; }
 textarea { font: inherit; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; width: 100%; }
+.card h3 { font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--muted); }
+.stats-dl { margin-top: 1rem; }
+.answers { margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); grid-template-columns: minmax(160px, 30%) 1fr; }
+.answers dt { direction: rtl; text-align: right; }
+.answers dd { white-space: pre-wrap; }
+.inline-form { display: inline-flex; gap: 0.25rem; align-items: center; margin-right: 0.5rem; }
+input.compact { padding: 0.2rem 0.4rem; font-size: 0.85rem; width: 140px; }
 select.compact { padding: 0.2rem 0.4rem; font-size: 0.85rem; }
 button.secondary { background: none; color: var(--accent); }
 .tag { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 4px; font-size: 0.75rem; background: var(--accent-soft); color: var(--accent); }

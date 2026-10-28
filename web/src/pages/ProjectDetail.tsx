@@ -4,8 +4,8 @@ import { supabase } from '../supabase';
 import { useAuth } from '../auth';
 import { STATUS_LABEL, fmtDate, fmtDateTime, humanize, maskId, type Status } from '../labels';
 import {
-  ConfirmationSelect, ContactForm, DetailsEditor, EnrollForm, InterviewResult, InterviewScheduler, IssueAdder,
-  ReviewForm, StatusEditor, WithdrawForm, removeIssue, type Lookup,
+  ConfirmationSelect, ContactForm, DEPOSIT_LABEL, DepositEditor, DetailsEditor, EnrollForm, InterviewResult,
+  InterviewScheduler, IssueAdder, ReviewForm, StatusEditor, WithdrawForm, removeIssue, type Lookup,
 } from '../components/Editors';
 
 type Project = {
@@ -23,6 +23,9 @@ type Project = {
   stage_id: number | null;
   sector_id: number | null;
   district_id: number | null;
+  deposit_method: string | null;
+  deposit_amount: number | null;
+  deposit_note: string | null;
   sector: { name_en: string } | null;
   stage: { name_en: string } | null;
   source: { name: string } | null;
@@ -66,6 +69,21 @@ type Enrollment = {
 };
 type Contact = { id: number; channel: string; attempted_at: string; outcome: string | null; notes: string | null };
 type StatusEvent = { id: number; from_status: Status | null; to_status: Status; changed_at: string; by: { full_name: string } | null };
+type Profile = {
+  id: number;
+  submitted_at: string;
+  summary: string | null;
+  founders: number | null;
+  female_founders: number | null;
+  founders_under_35: number | null;
+  employees: number | null;
+  female_employees: number | null;
+  freelancers: number | null;
+  funding_amount: number | null;
+  annual_revenue: number | null;
+  monthly_income: number | null;
+  answers: Record<string, string>;
+};
 
 type Data = {
   project: Project;
@@ -76,6 +94,7 @@ type Data = {
   enrollments: Enrollment[];
   contacts: Contact[];
   events: StatusEvent[];
+  profiles: Profile[];
 };
 type Lookups = { stages: Lookup[]; sectors: Lookup[]; districts: Lookup[]; issues: Lookup[]; rounds: Lookup[] };
 
@@ -104,7 +123,7 @@ export default function ProjectDetail() {
       supabase
         .from('projects')
         .select(
-          'id, code, name, description, status, submitted_at, founded_on, social_url, university, track, sector_other, stage_id, sector_id, district_id, sector:sectors(name_en), stage:project_stages(name_en), source:intake_sources(name), district:districts(name_ar), governorate:governorates(name_en)',
+          'id, code, name, description, status, submitted_at, founded_on, social_url, university, track, sector_other, stage_id, sector_id, district_id, deposit_method, deposit_amount, deposit_note, sector:sectors(name_en), stage:project_stages(name_en), source:intake_sources(name), district:districts(name_ar), governorate:governorates(name_en)',
         )
         .eq('id', pid)
         .single(),
@@ -139,10 +158,17 @@ export default function ProjectDetail() {
         .select('id, from_status, to_status, changed_at, by:staff(full_name)')
         .eq('project_id', pid)
         .order('changed_at'),
+      supabase
+        .from('company_profiles')
+        .select(
+          'id, submitted_at, summary, founders, female_founders, founders_under_35, employees, female_employees, freelancers, funding_amount, annual_revenue, monthly_income, answers',
+        )
+        .eq('project_id', pid)
+        .order('submitted_at', { ascending: false }),
     ]).then((results) => {
       const failed = results.find((r) => r.error);
       if (failed) return setError(failed.error!.message);
-      const [p, m, i, r, is, e, c, ev] = results.map((x) => x.data);
+      const [p, m, i, r, is, e, c, ev, pr] = results.map((x) => x.data);
       setData({
         project: p as unknown as Project,
         members: m as unknown as Member[],
@@ -152,6 +178,7 @@ export default function ProjectDetail() {
         enrollments: e as unknown as Enrollment[],
         contacts: c as unknown as Contact[],
         events: ev as unknown as StatusEvent[],
+        profiles: pr as Profile[],
       });
     });
   }, [pid]);
@@ -245,6 +272,22 @@ export default function ProjectDetail() {
               {e.withdraw_reason && <Item label="Reason">{e.withdraw_reason}</Item>}
             </dl>
           ))}
+          <h3>Commitment deposit</h3>
+          <dl>
+            <Item label="Deposit">{p.deposit_method ? DEPOSIT_LABEL[p.deposit_method] : 'Not recorded'}</Item>
+            {p.deposit_amount !== null && <Item label="Amount">{`${p.deposit_amount} EGP`}</Item>}
+            {p.deposit_note && <Item label="Note">{p.deposit_note}</Item>}
+          </dl>
+          {canEdit && (
+            <DepositEditor
+              key={`${p.deposit_method}-${p.deposit_amount}-${p.deposit_note}`}
+              projectId={p.id}
+              method={p.deposit_method}
+              amount={p.deposit_amount}
+              note={p.deposit_note}
+              onDone={load}
+            />
+          )}
           {canEdit && lookups && (activeEnrollment ? (
             <WithdrawForm enrollmentId={activeEnrollment.id} projectId={p.id} onDone={load} />
           ) : (
@@ -264,6 +307,8 @@ export default function ProjectDetail() {
           <p className="prose" dir="auto">{p.description}</p>
         </Section>
       )}
+
+      {data.profiles.map((pf) => <ProfileSection key={pf.id} profile={pf} />)}
 
       <Section
         title={`Team (${data.members.length})`}
@@ -388,6 +433,39 @@ export default function ProjectDetail() {
         </ul>
       </Section>
     </>
+  );
+}
+
+// Interview form (Company Profile sheet): summary, key numbers, all answers
+function ProfileSection({ profile: pf }: { profile: Profile }) {
+  const [open, setOpen] = useState(false);
+  const money = (n: number | null) => (n === null ? null : `${n.toLocaleString()} EGP`);
+  const stats: [string, ReactNode][] = [
+    ['Founders', pf.founders],
+    ['Female founders', pf.female_founders],
+    ['Founders under 35', pf.founders_under_35],
+    ['Employees', pf.employees],
+    ['Female employees', pf.female_employees],
+    ['Freelancers', pf.freelancers],
+    ['Funding raised', money(pf.funding_amount)],
+    ['Annual revenue', money(pf.annual_revenue)],
+    ['Monthly income', money(pf.monthly_income)],
+  ];
+  return (
+    <Section
+      title={`Company profile · ${fmtDate(pf.submitted_at)}`}
+      action={<button className="link" onClick={() => setOpen((v) => !v)}>{open ? 'Hide answers' : 'Show all answers'}</button>}
+    >
+      {pf.summary && <p className="prose" dir="auto">{pf.summary}</p>}
+      <dl className="stats-dl">
+        {stats.filter(([, v]) => v !== null).map(([k, v]) => <Item key={k} label={k}>{v}</Item>)}
+      </dl>
+      {open && (
+        <dl className="answers">
+          {Object.entries(pf.answers).map(([q, a]) => <Item key={q} label={q}>{a}</Item>)}
+        </dl>
+      )}
+    </Section>
   );
 }
 

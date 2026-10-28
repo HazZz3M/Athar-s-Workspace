@@ -268,6 +268,40 @@ export function WithdrawForm({ enrollmentId, projectId, onDone }: { enrollmentId
 }
 
 // ---------------------------------------------------------------------
+// Commitment deposit (جدية حضور), kept as a note on the project
+export const DEPOSIT_LABEL: Record<string, string> = {
+  not_paid: 'Not paid', office: 'Paid at the office', instapay: 'InstaPay', vodafone_cash: 'Vodafone Cash', other: 'Other',
+};
+
+export function DepositEditor({ projectId, method, amount, note, onDone }: {
+  projectId: number; method: string | null; amount: number | null; note: string | null; onDone: () => void;
+}) {
+  const [m, setM] = useState(method ?? '');
+  const [a, setA] = useState(amount?.toString() ?? '');
+  const [n, setN] = useState(note ?? '');
+  const { busy, error, run } = useSave(onDone);
+  return (
+    <Form label="Save deposit" busy={busy} error={error}
+      onSubmit={() => run(() => supabase.from('projects').update({
+        deposit_method: m || null,
+        deposit_amount: m && m !== 'not_paid' && a ? Number(a) : null,
+        deposit_note: n.trim() || null,
+      }).eq('id', projectId))}>
+      <div className="row">
+        <select value={m} onChange={(e) => setM(e.target.value)}>
+          <option value="">Not recorded</option>
+          {Object.entries(DEPOSIT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        {m && m !== 'not_paid' && (
+          <input type="number" min="0" step="1" placeholder="Amount (EGP)" value={a} onChange={(e) => setA(e.target.value)} />
+        )}
+      </div>
+      <input placeholder="Note (optional)" value={n} onChange={(e) => setN(e.target.value)} dir="auto" />
+    </Form>
+  );
+}
+
+// ---------------------------------------------------------------------
 export function ConfirmationSelect({ memberId, value, onDone }: { memberId: number; value: string; onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const change = async (next: string) => {

@@ -13,6 +13,7 @@ type Run = {
   rows_read: number | null;
   rows_new: number | null;
   rows_failed: number | null;
+  profiles_new: number | null;
   error: string | null;
 };
 type Issue = {
@@ -21,6 +22,7 @@ type Issue = {
   sheet_row: number | null;
   created_at: string;
   project: { id: number; code: string; name: string } | null;
+  profile: { id: number; project_name: string } | null;
 };
 type Check = { configured: boolean; service_account: string | null };
 
@@ -33,7 +35,32 @@ const ISSUE_LABEL: Record<string, string> = {
   no_members: 'No team members in the row',
   unreadable_timestamp: 'Timestamp not readable (row not added)',
   row_failed: 'Row could not be added',
+  profile_unmatched: 'Interview form: no project with this name (link it to the right project)',
+  profile_ambiguous: 'Interview form: several projects have this name (link it to the right one)',
+  profile_failed: 'Interview form row could not be added',
 };
+
+// Link an interview-form profile to a project by its code, e.g. DAAP0123MSMES
+function LinkProfile({ issueId, profileId, onDone }: { issueId: number; profileId: number; onDone: () => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const link = async () => {
+    setError(null);
+    const { data: project } = await supabase.from('projects').select('id').eq('code', code.trim().toUpperCase()).maybeSingle();
+    if (!project) return setError('No project with that code');
+    const res = await supabase.from('company_profiles').update({ project_id: project.id }).eq('id', profileId);
+    if (res.error) return setError(res.error.message);
+    await supabase.from('sync_issues').update({ resolved: true }).eq('id', issueId);
+    onDone();
+  };
+  return (
+    <span className="inline-form">
+      <input className="compact" placeholder="DAAP0123MSMES" value={code} onChange={(e) => setCode(e.target.value)} />
+      <button className="link" onClick={link} disabled={!code.trim()}>Link</button>
+      {error && <span className="error small">{error}</span>}
+    </span>
+  );
+}
 
 export default function Sync() {
   const { role } = useAuth();
@@ -49,12 +76,12 @@ export default function Sync() {
     const [r, i] = await Promise.all([
       supabase
         .from('sync_runs')
-        .select('id, started_at, finished_at, trigger, status, rows_read, rows_new, rows_failed, error')
+        .select('id, started_at, finished_at, trigger, status, rows_read, rows_new, rows_failed, profiles_new, error')
         .order('started_at', { ascending: false })
         .limit(20),
       supabase
         .from('sync_issues')
-        .select('id, kind, sheet_row, created_at, project:projects(id, code, name)')
+        .select('id, kind, sheet_row, created_at, project:projects(id, code, name), profile:company_profiles(id, project_name)')
         .eq('resolved', false)
         .order('created_at', { ascending: false })
         .limit(200),
@@ -79,7 +106,12 @@ export default function Sync() {
       const body = await (error as { context?: Response }).context?.json?.().catch(() => null);
       setError(body?.error ?? error.message);
     } else if (data?.skipped) setMessage(data.skipped);
-    else setMessage(`Done: ${data.rows_new} new project(s) added from ${data.rows_read} sheet rows.`);
+    else {
+      setMessage(
+        `Done: ${data.rows_new} new project(s) from ${data.rows_read} intake rows, ${data.profiles_new ?? 0} new interview profile(s).`,
+      );
+      if (data.error) setError(data.error);
+    }
     setBusy(false);
     load();
   };
@@ -96,8 +128,9 @@ export default function Sync() {
     <>
       <h1>Data sync</h1>
       <p className="muted">
-        New rows in the Google Sheet are added here every 15 minutes as new projects. The sheet is only read, never
-        changed, and edits made in this app are never overwritten.
+        Every 15 minutes the app reads the Google Sheets: new intake rows (Main MSMEs) become new projects, and new
+        interview forms (Company Profile) are added to their projects. The sheets are only read, never changed, and edits
+        made in this app are never overwritten.
       </p>
 
       <div className="grid">
@@ -146,7 +179,8 @@ export default function Sync() {
                   <th>Started</th>
                   <th>How</th>
                   <th>Result</th>
-                  <th className="num">New</th>
+                  <th className="num">New projects</th>
+                  <th className="num">New profiles</th>
                   <th className="num">Failed</th>
                 </tr>
               </thead>
@@ -160,6 +194,7 @@ export default function Sync() {
                       {r.error && <div className="muted small">{r.error}</div>}
                     </td>
                     <td className="num">{r.rows_new ?? '—'}</td>
+                    <td className="num">{r.profiles_new ?? '—'}</td>
                     <td className="num">{r.rows_failed ?? '—'}</td>
                   </tr>
                 ))}
@@ -189,13 +224,20 @@ export default function Sync() {
             {issues.map((i) => (
               <tr key={i.id}>
                 <td dir="auto">
-                  {i.project ? <Link to={`/projects/${i.project.id}`}>{i.project.name}</Link> : '—'}
+                  {i.project ? (
+                    <Link to={`/projects/${i.project.id}`}>{i.project.name}</Link>
+                  ) : (
+                    i.profile?.project_name ?? '—'
+                  )}
                 </td>
                 <td>{ISSUE_LABEL[i.kind] ?? humanize(i.kind)}</td>
                 <td className="num">{i.sheet_row ?? '—'}</td>
                 <td>{fmtDateTime(i.created_at)}</td>
                 {canEdit && (
                   <td>
+                    {i.profile && i.kind.startsWith('profile_') && i.kind !== 'profile_failed' && (
+                      <LinkProfile issueId={i.id} profileId={i.profile.id} onDone={load} />
+                    )}
                     <button className="link" onClick={() => resolve(i.id)}>
                       Mark resolved
                     </button>

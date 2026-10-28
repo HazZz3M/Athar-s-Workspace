@@ -1,15 +1,23 @@
-// sheet-sync: read the Main MSMEs Google Sheet (read-only) and add new
-// Total Responces rows as new projects. Rules match scripts/import/transform.mjs.
+// sheet-sync: read the program's Google Sheets (read-only) into Supabase.
+//   Phase 1, Main MSMEs: new Total Responces rows become new projects. Rules
+//   match scripts/import/transform.mjs.
+//   Phase 2, Company Profile 2026 (Responses): interview form answers become
+//   company_profiles, with the Description tab's summary. The tab's deposit
+//   columns (Paid ? / Amount) are imported once; after that the app owns them.
 //
 // Called by pg_cron every 15 minutes (anon key, trigger "schedule") and by the
 // app's "Sync now" button (staff user token, trigger "manual").
 // POST {"check": true} from a staff user returns whether Google access is set up.
 //
-// Secret: GOOGLE_SERVICE_ACCOUNT_JSON — the service account key JSON. Share the
-// sheet with the service account's e-mail as Viewer.
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+// Secret: GOOGLE_SERVICE_ACCOUNT_JSON — the service account key JSON. Share
+// both sheets with the service account's e-mail as Viewer.
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 const SHEET_ID = '1KARk6a0UVheuS2yzcLJD8zmyLXz_WnOHEuj4eSCAeBw';
+const PROFILE_SHEET_ID = '11YQFJI7SxQ4rZ7op9GxaJlwLh8MNSpEN4teTjMMUDpg';
+const PROFILE_TAB = 'Form Responses 1';
+const PROFILE_LAST_COL = 'AV'; // questions only; later columns are sheet helper formulas
+const DESCRIPTION_TAB = 'Description';
 const TR_TAB = 'Total Responces';
 const MAX_MEMBERS = 10;
 const LAST_COL = 'AV'; // 8 project columns + 10 members x 4
@@ -188,34 +196,133 @@ async function googleToken(sa: { client_email: string; private_key: string }) {
   return body.access_token as string;
 }
 
-async function readSheet(token: string) {
-  const api = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
-  const headers = { Authorization: `Bearer ${token}` };
-  const meta = await fetch(`${api}?fields=sheets.properties.title`, { headers });
-  if (!meta.ok) {
-    throw new Error(meta.status === 403 || meta.status === 404
-      ? 'The service account cannot open the sheet. Share the sheet with its e-mail as Viewer.'
-      : `Google Sheets error ${meta.status}`);
+// Tab titles of a sheet, or a clear error when the service account can't open it
+async function sheetTabs(sheetId: string, token: string, label: string) {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 403 || res.status === 404
+      ? `The service account cannot open the ${label} sheet. Share it with the service account's e-mail as Viewer.`
+      : `Google Sheets error ${res.status} (${label})`);
   }
-  const titles = new Set(((await meta.json()).sheets ?? []).map((s: { properties: { title: string } }) => s.properties.title));
+  return new Set<string>(((await res.json()).sheets ?? []).map((s: { properties: { title: string } }) => s.properties.title));
+}
+
+async function batchGet(sheetId: string, token: string, ranges: string[]) {
+  const params = new URLSearchParams();
+  for (const r of ranges) params.append('ranges', r);
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchGet?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Google Sheets error ${res.status}`);
+  return ((await res.json()).valueRanges as { values?: string[][] }[]).map((v) => v.values ?? []);
+}
+
+async function readSheet(token: string) {
+  const titles = await sheetTabs(SHEET_ID, token, 'Main MSMEs');
   if (!titles.has(TR_TAB)) throw new Error(`Tab "${TR_TAB}" not found in the sheet`);
   const sourceTabs = Object.keys(SOURCE_TABS).filter((t) => titles.has(t));
-
-  const params = new URLSearchParams();
-  params.append('ranges', `'${TR_TAB}'!A1:${LAST_COL}`);
-  for (const t of sourceTabs) params.append('ranges', `'${t}'!A2:A`);
-  const res = await fetch(`${api}/values:batchGet?${params}`, { headers });
-  if (!res.ok) throw new Error(`Google Sheets error ${res.status}`);
-  const ranges: { values?: string[][] }[] = (await res.json()).valueRanges;
+  const ranges = await batchGet(SHEET_ID, token, [`'${TR_TAB}'!A1:${LAST_COL}`, ...sourceTabs.map((t) => `'${t}'!A2:A`)]);
 
   const sources = new Map<string, string>();
   sourceTabs.forEach((t, i) => {
-    for (const [ts] of ranges[i + 1].values ?? []) {
+    for (const [ts] of ranges[i + 1]) {
       const key = clean(ts);
       if (key && !sources.has(key)) sources.set(key, SOURCE_TABS[t]);
     }
   });
-  return { rows: ranges[0].values ?? [], sources };
+  return { rows: ranges[0], sources };
+}
+
+// ---------------------------------------------------------------------
+// Phase 2: Company Profile form + Description tab
+// ---------------------------------------------------------------------
+// "£1,200.00" / "١٢٠٠" / "3 موظفين" -> number; null when there is none
+function toNumber(raw: unknown) {
+  const s = toLatinDigits(raw).replace(/[^\d.]/g, '');
+  return s && Number.isFinite(+s) ? +s : null;
+}
+const toSmall = (raw: unknown) => {
+  const n = toNumber(raw);
+  return n !== null && n <= 32767 ? Math.round(n) : null;
+};
+
+const DEPOSIT_METHODS: Record<string, string> = {
+  'not paid': 'not_paid', 'office': 'office', 'instapay': 'instapay', 'vodafone cash': 'vodafone_cash',
+};
+
+async function syncProfiles(token: string, admin: SupabaseClient, runId: number) {
+  const titles = await sheetTabs(PROFILE_SHEET_ID, token, 'Company Profile');
+  if (!titles.has(PROFILE_TAB)) throw new Error(`Tab "${PROFILE_TAB}" not found in the Company Profile sheet`);
+  const [form, desc] = await batchGet(PROFILE_SHEET_ID, token, [
+    `'${PROFILE_TAB}'!A1:${PROFILE_LAST_COL}`,
+    ...(titles.has(DESCRIPTION_TAB) ? [`'${DESCRIPTION_TAB}'!A1:H`] : []),
+  ]);
+  const header = form[0] ?? [];
+
+  // Description lists the form's projects sorted by submission time (its
+  // column A is a SORT/FILTER of the form), so row k there is the k-th
+  // response in time order. Summaries are paired by that position and kept
+  // only when the names agree.
+  const responses = form.slice(1)
+    .map((row, i) => ({ row, sheetRow: i + 2, ts: sheetTimestamp(row[0]), name: clean(row[1]) }))
+    .filter((r) => r.name);
+  const ordered = [...responses].sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''));
+  const summaryOf = new Map<number, string>();
+  (desc ?? []).slice(1).forEach((d, k) => {
+    const r = ordered[k];
+    const summary = String(d[1] ?? '').trim();
+    if (r && summary && clean(d[0]) === r.name) summaryOf.set(r.sheetRow, summary);
+  });
+
+  const known: Record<string, boolean> = (await admin.rpc('sync_known_profile_keys')).data ?? {};
+  let created = 0;
+  for (const r of responses) {
+    if (!r.ts) continue;
+    const key = `${r.ts}|${r.name}`;
+    const summary = summaryOf.get(r.sheetRow) ?? null;
+    if (key in known && (known[key] || !summary)) continue;
+    const { data, error } = await admin.rpc('sync_ingest_profile', {
+      p_run: runId,
+      r: {
+        submitted_at: r.ts,
+        project_name: r.name,
+        sheet_row: r.sheetRow,
+        summary,
+        founders: toSmall(r.row[20]),
+        female_founders: toSmall(r.row[21]),
+        founders_under_35: toSmall(r.row[22]),
+        employees: toSmall(r.row[23]),
+        female_employees: toSmall(r.row[24]),
+        freelancers: toSmall(r.row[25]),
+        funding_amount: toNumber(r.row[34]),
+        annual_revenue: toNumber(r.row[37]),
+        monthly_income: toNumber(r.row[38]),
+        answers: Object.fromEntries(
+          header.map((h, i) => [clean(h) || `col_${i}`, String(r.row[i] ?? '').trim()]).filter(([, v]) => v),
+        ),
+      },
+    });
+    if (error) {
+      await admin.from('sync_issues').insert({ run_id: runId, sheet_row: r.sheetRow, kind: 'profile_failed' });
+    } else if (data === 'new') created++;
+  }
+
+  // One-time: deposits typed in Description (Paid ? / Amount). The function
+  // skips projects that already have a deposit and refuses to run twice.
+  if (desc?.length) {
+    const deposits = desc.slice(1).flatMap((d) => {
+      const paid = clean(d[6]);
+      if (!clean(d[0]) || !paid) return [];
+      const method = DEPOSIT_METHODS[paid.toLowerCase()] ?? 'other';
+      return [{ name: clean(d[0]), method, amount: toNumber(d[7]), note: method === 'other' ? paid : null }];
+    });
+    await admin.rpc('sync_import_deposits', { r: deposits });
+  }
+
+  await admin.rpc('sync_set_profiles_new', { p_run: runId, p_count: created });
+  return created;
 }
 
 // ---------------------------------------------------------------------
@@ -265,7 +372,8 @@ Deno.serve(async (req) => {
 
   let rowsRead = 0, rowsNew = 0, rowsFailed = 0;
   try {
-    const { rows, sources } = await readSheet(await googleToken(sa!));
+    const token = await googleToken(sa!);
+    const { rows, sources } = await readSheet(token);
     const header = rows[0] ?? [];
     const known = new Set<string>((await admin.rpc('sync_known_keys')).data ?? []);
 
@@ -290,10 +398,20 @@ Deno.serve(async (req) => {
         known.add(`${r.submitted_at}|${r.name}`);
       }
     }
+    // Phase 2 runs after phase 1 so new profiles can match projects added above.
+    // A problem here is reported on the run without undoing phase 1.
+    let profilesNew = 0;
+    let profileError: string | null = null;
+    try {
+      profilesNew = await syncProfiles(token, admin, runId);
+    } catch (e) {
+      profileError = `Company Profile sheet: ${e instanceof Error ? e.message : String(e)}`;
+    }
     await admin.rpc('sync_finish', {
-      p_run: runId, p_status: 'ok', p_rows_read: rowsRead, p_rows_new: rowsNew, p_rows_failed: rowsFailed, p_error: null,
+      p_run: runId, p_status: profileError ? 'failed' : 'ok', p_rows_read: rowsRead, p_rows_new: rowsNew,
+      p_rows_failed: rowsFailed, p_error: profileError,
     });
-    return json({ run: runId, rows_read: rowsRead, rows_new: rowsNew, rows_failed: rowsFailed });
+    return json({ run: runId, rows_read: rowsRead, rows_new: rowsNew, rows_failed: rowsFailed, profiles_new: profilesNew, error: profileError });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await admin.rpc('sync_finish', {
