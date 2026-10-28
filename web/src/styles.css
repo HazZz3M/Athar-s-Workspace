@@ -111,6 +111,22 @@ tbody tr:last-child td { border-bottom: none; }
 .status-rejected, .status-withdrawn { background: #fde8e7; color: #a1251b; }
 .status-waiting, .status-needs_update { background: #fff4dc; color: #8a5a00; }
 .status-interviewing, .status-screening { background: #e6effc; color: #1d4f9c; }
+.sync-ok { background: #e3f5e9; color: #146c2e; }
+.sync-failed { background: #fde8e7; color: #a1251b; }
+.sync-running { background: #e6effc; color: #1d4f9c; }
+.notice { background: #fff4dc; border: 1px solid #f3dca8; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.9rem; }
+.small { font-size: 0.8rem; }
+.edit-stack { display: grid; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); }
+.edit-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.edit-form label { flex: 1 1 100%; margin-bottom: 0; }
+.edit-form input, .edit-form textarea { flex: 1 1 200px; min-width: 0; }
+.edit-form .row { display: flex; flex-wrap: wrap; gap: 0.5rem; flex: 1 1 100%; }
+.edit-form .error { flex: 1 1 100%; margin: 0; }
+.timeline .edit-form { margin-top: 0.5rem; }
+.title-row .edit-form { margin-left: auto; }
+textarea { font: inherit; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; width: 100%; }
+select.compact { padding: 0.2rem 0.4rem; font-size: 0.85rem; }
+button.secondary { background: none; color: var(--accent); }
 .tag { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 4px; font-size: 0.75rem; background: var(--accent-soft); color: var(--accent); }
 .tag.danger { background: #fde8e7; color: var(--danger); }
 

@@ -5,6 +5,7 @@ import SignIn from './pages/SignIn';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
+import Sync from './pages/Sync';
 
 export default function App() {
   const { session, role, loading } = useAuth();
@@ -36,6 +37,7 @@ export default function App() {
             Dashboard
           </NavLink>
           <NavLink to="/projects">Projects</NavLink>
+          <NavLink to="/sync">Data sync</NavLink>
         </nav>
         <span className="user">
           {session.user.email} · {role}
@@ -49,6 +51,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
+          <Route path="/sync" element={<Sync />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
