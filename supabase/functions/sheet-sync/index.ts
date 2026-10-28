@@ -4,6 +4,8 @@
 //   Phase 2, Company Profile 2026 (Responses): interview form answers become
 //   company_profiles, with the Description tab's summary. The tab's deposit
 //   columns (Paid ? / Amount) are imported once; after that the app owns them.
+//   Phase 3, Attendance R_XX (02_Training): daily attendance, consent, post
+//   assessment, business plan and indicator flags per round participant.
 //
 // Called by pg_cron every 15 minutes (anon key, trigger "schedule") and by the
 // app's "Sync now" button (staff user token, trigger "manual").
@@ -326,6 +328,64 @@ async function syncProfiles(token: string, admin: SupabaseClient, runId: number)
 }
 
 // ---------------------------------------------------------------------
+// Phase 3: per-round "Attendance R_XX" sheets (Drive folder 02_Training).
+// Only rounds whose attendance_source is 'sheet' or 'sheet_once' are read;
+// 'sheet_once' rounds switch to the app after one import.
+// Columns (same in every round): A Code, C Name, F National ID, K Kobo code,
+// L-P D1-D5, Q Consent, R Post Assessment, S Pass, T Business Plan,
+// Y 4.1, Z Counted 4.4, AB Group (round 8).
+// ---------------------------------------------------------------------
+async function syncAttendance(token: string, admin: SupabaseClient, runId: number) {
+  const { data: rounds } = await admin
+    .from('rounds')
+    .select('id, number, attendance_sheet_id')
+    .in('attendance_source', ['sheet', 'sheet_once'])
+    .not('attendance_sheet_id', 'is', null)
+    .order('number');
+  const errors: string[] = [];
+  let matched = 0;
+  for (const round of rounds ?? []) {
+    const label = `Attendance R_${String(round.number).padStart(2, '0')}`;
+    try {
+      const titles = await sheetTabs(round.attendance_sheet_id, token, label);
+      if (!titles.has('Attendance')) throw new Error('no "Attendance" tab');
+      const [values] = await batchGet(round.attendance_sheet_id, token, [`'Attendance'!A1:AB`]);
+      // A broken formula fills the tab with one error cell, e.g. #REF!.
+      // #N/A is an empty FILTER: a round with nobody in it yet.
+      const broken = clean(values[1]?.[0]);
+      if (broken.startsWith('#') && broken !== '#N/A') throw new Error(`the Attendance tab shows ${broken}; fix its formula in the sheet`);
+      const yes = (v: unknown) => clean(v).toUpperCase() === 'TRUE';
+      const rows = values.slice(1).flatMap((row, i) => {
+        if (!clean(row[2]) && !clean(row[5])) return [];
+        return [{
+          sheet_row: i + 2,
+          code: clean(row[0]),
+          name: clean(row[2]),
+          national_id: normNid(row[5]),
+          kobo: clean(row[10]),
+          days: [11, 12, 13, 14, 15].map((c) => yes(row[c])),
+          consent: yes(row[16]),
+          post_done: yes(row[17]),
+          post_passed: yes(row[18]),
+          business_plan: yes(row[19]),
+          i41: yes(row[24]),
+          employment: yes(row[25]),
+          group: clean(row[27]),
+        }];
+      });
+      const { data, error } = await admin.rpc('sync_round_attendance', {
+        p_run: runId, p_round: round.id, p_label: label, rows,
+      });
+      if (error) throw new Error(error.message);
+      matched += data?.matched ?? 0;
+    } catch (e) {
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { matched, errors };
+}
+
+// ---------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------
 Deno.serve(async (req) => {
@@ -401,17 +461,25 @@ Deno.serve(async (req) => {
     // Phase 2 runs after phase 1 so new profiles can match projects added above.
     // A problem here is reported on the run without undoing phase 1.
     let profilesNew = 0;
-    let profileError: string | null = null;
+    const problems: string[] = [];
     try {
       profilesNew = await syncProfiles(token, admin, runId);
     } catch (e) {
-      profileError = `Company Profile sheet: ${e instanceof Error ? e.message : String(e)}`;
+      problems.push(`Company Profile sheet: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // Phase 3 after phase 2; one round's problem doesn't stop the others
+    const attendance = await syncAttendance(token, admin, runId);
+    problems.push(...attendance.errors);
+
+    const error = problems.length ? problems.join(' | ') : null;
     await admin.rpc('sync_finish', {
-      p_run: runId, p_status: profileError ? 'failed' : 'ok', p_rows_read: rowsRead, p_rows_new: rowsNew,
-      p_rows_failed: rowsFailed, p_error: profileError,
+      p_run: runId, p_status: error ? 'failed' : 'ok', p_rows_read: rowsRead, p_rows_new: rowsNew,
+      p_rows_failed: rowsFailed, p_error: error,
     });
-    return json({ run: runId, rows_read: rowsRead, rows_new: rowsNew, rows_failed: rowsFailed, profiles_new: profilesNew, error: profileError });
+    return json({
+      run: runId, rows_read: rowsRead, rows_new: rowsNew, rows_failed: rowsFailed, profiles_new: profilesNew,
+      attendance_rows: attendance.matched, error,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await admin.rpc('sync_finish', {

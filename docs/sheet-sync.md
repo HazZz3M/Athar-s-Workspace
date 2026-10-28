@@ -25,6 +25,32 @@ The same function also reads **Company Profile 2026 (Responses)** (`11YQFJI7SxQ4
 
 The service account needs **Viewer** access on this sheet too.
 
+## Phase 3: round attendance (Drive folder 02_Training)
+
+Each round has its own `Attendance R_XX` sheet. The function reads its **Attendance** tab: D1–D5, consent form, post assessment, pass, business plan, 4.1 and Counted 4.4, plus Kobo code and Group (round 8). The sheet IDs are stored in `rounds.attendance_sheet_id`.
+
+- **Who is read (`rounds.attendance_source`):**
+  - `sheet`: read on every run. Used for rounds 8–10, which are still running.
+  - `sheet_once`: read once, then switched to `app`. Used for the finished rounds 1–7. It only switches after a read that matched someone, so a broken tab is retried.
+  - `app`: no longer read. Attendance is managed on the round's page in the app.
+  - An admin can press **Manage in app** on a round page to stop reading its sheet. While a round is read from its sheet, its page is read-only, because the next sync would replace any edit.
+- **Matching a row to a participant:**
+  1. National ID anywhere in the round.
+  2. If that fails, the name within the team with the row's code.
+  3. If that fails, a name only one participant in the round has.
+  - The code alone isn't trusted. From sheet row 8 on, round 9's codes are shifted by one against the imported enrollments.
+  - Rows that still don't match are listed on **Data sync** as "Attendance sheet: nobody in the round…" with the sheet name and row number.
+- **Indicators** (`v_participant_indicators` per person, `v_round_indicators` per round) follow the sheets' Counted columns:
+  - **3.1:** two or more days attended and the consent form signed.
+  - **3.2:** 3.1, plus the post assessment done and passed.
+  - **3.3 and 3.4:** 3.2, plus the business plan submitted.
+  - **4.1 and 4.4:** the sheet's 4.1 and Counted 4.4 flags.
+  - Withdrawn enrollments are not counted.
+- **Broken tabs:** if the tab starts with a formula error such as `#REF!`, the run reports it and skips that round. As of 2026-10-28, `Attendance R_05` shows `#REF!`. A tab showing `#N/A` means the round has nobody in it yet, and is skipped quietly.
+- **Not read:** Analysis, Zoom Attendance Log, Keep hidden, and round 9's Day form tabs.
+
+Each round sheet also needs the service account as **Viewer**.
+
 ## One-time setup (Google access)
 
 1. Open https://console.cloud.google.com/ with the Google account that owns the sheet. Create a project, for example `athar-sheet-sync`.
@@ -47,6 +73,7 @@ You can delete the downloaded `.json` file once the secret is saved.
 | Edge Function | `supabase/functions/sheet-sync/index.ts` |
 | Tables `sync_runs`, `sync_issues`; functions `sync_start`, `sync_finish`, `sync_known_keys`, `sync_ingest_row` | `supabase/migrations/20261028150808_sheet_sync.sql` |
 | Schedule (pg_cron, every 15 minutes) | `supabase/migrations/20261028151051_sheet_sync_schedule.sql` |
+| Attendance columns, `sync_round_attendance`, indicator views | `supabase/migrations/20261028161345_attendance_tracking.sql` and the three `2026102816*_attendance_*` / `round_indicators_view` migrations after it |
 
 - **Who can run it:**
   - The schedule calls the function with the public anon key.
