@@ -20,6 +20,7 @@ type Issue = {
   id: number;
   kind: string;
   sheet_row: number | null;
+  sheet_label: string | null;
   created_at: string;
   project: { id: number; code: string; name: string } | null;
   profile: { id: number; project_name: string } | null;
@@ -39,6 +40,7 @@ const ISSUE_LABEL: Record<string, string> = {
   profile_unmatched: 'Interview form: no project with this name (link it to the right project)',
   profile_ambiguous: 'Interview form: several projects have this name (link it to the right one)',
   profile_failed: 'Interview form row could not be added',
+  attendance_unmatched: 'Attendance sheet: nobody in the round has this national ID or name (add them to the round or fix the row)',
 };
 
 // Link an interview-form profile to a project by its code, e.g. DAAP0123MSMES
@@ -82,7 +84,7 @@ export default function Sync() {
         .limit(20),
       supabase
         .from('sync_issues')
-        .select('id, kind, sheet_row, created_at, project:projects(id, code, name), profile:company_profiles(id, project_name)')
+        .select('id, kind, sheet_row, sheet_label, created_at, project:projects(id, code, name), profile:company_profiles(id, project_name)')
         .eq('resolved', false)
         .order('created_at', { ascending: false })
         .limit(200),
@@ -129,8 +131,9 @@ export default function Sync() {
     <>
       <h1>Data sync</h1>
       <p className="muted">
-        Every 15 minutes the app reads the Google Sheets: new intake rows (Main MSMEs) become new projects, and new
-        interview forms (Company Profile) are added to their projects. The sheets are only read, never changed, and edits
+        Every 15 minutes the app reads the Google Sheets: new intake rows (Main MSMEs) become new projects, new
+        interview forms (Company Profile) are added to their projects, and rounds still read from their attendance
+        sheet get their attendance and indicators. The sheets are only read, never changed, and edits
         made in this app are never overwritten.
       </p>
 
@@ -228,7 +231,7 @@ export default function Sync() {
                   {i.project ? (
                     <Link to={`/projects/${i.project.id}`}>{i.project.name}</Link>
                   ) : (
-                    i.profile?.project_name ?? '—'
+                    i.profile?.project_name ?? i.sheet_label ?? '—'
                   )}
                 </td>
                 <td>{ISSUE_LABEL[i.kind] ?? humanize(i.kind)}</td>

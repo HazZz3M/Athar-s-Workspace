@@ -114,6 +114,10 @@ tbody tr:last-child td { border-bottom: none; }
 .sync-ok { background: #e3f5e9; color: #146c2e; }
 .sync-failed { background: #fde8e7; color: #a1251b; }
 .sync-running { background: #e6effc; color: #1d4f9c; }
+.source-sheet, .source-sheet_once { background: #e6effc; color: #1d4f9c; }
+.source-app { background: #e3f5e9; color: #146c2e; }
+.grid-table td, .grid-table th { padding: 0.4rem 0.5rem; }
+.center-cell { text-align: center; }
 .notice { background: #fff4dc; border: 1px solid #f3dca8; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.9rem; }
 .small { font-size: 0.8rem; }
 .edit-stack { display: grid; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); }
