@@ -40,6 +40,7 @@ const ISSUE_LABEL: Record<string, string> = {
   profile_unmatched: 'Interview form: no project with this name (link it to the right project)',
   profile_ambiguous: 'Interview form: several projects have this name (link it to the right one)',
   profile_failed: 'Interview form row could not be added',
+  assessment_unmatched: 'Post assessment: nobody in the round has this national ID, Kobo code, phone or name (link it on the round page)',
   attendance_unmatched: 'Attendance sheet: nobody in the round has this national ID or name (add them to the round or fix the row)',
 };
 

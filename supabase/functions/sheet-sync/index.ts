@@ -6,6 +6,7 @@
 //   columns (Paid ? / Amount) are imported once; after that the app owns them.
 //   Phase 3, Attendance R_XX (02_Training): daily attendance, consent, post
 //   assessment, business plan and indicator flags per round participant.
+//   Phase 4, Post assessment R_XX: quiz answers per response, rescored here.
 //
 // Called by pg_cron every 15 minutes (anon key, trigger "schedule") and by the
 // app's "Sync now" button (staff user token, trigger "manual").
@@ -386,6 +387,84 @@ async function syncAttendance(token: string, admin: SupabaseClient, runId: numbe
 }
 
 // ---------------------------------------------------------------------
+// Phase 4: per-round "Post assessment R_XX" sheets. Rounds lay their tabs
+// out differently (extra Timestamp / Answers / Form Fill Link columns, a
+// new bilingual form in round 9), so columns are found by header: the
+// questions by their text in public.assessment_questions, the rest by
+// name. A tab without all 9 questions (Reference, R04's Data export) is
+// skipped, and so are rows without a name or without any answer.
+// ---------------------------------------------------------------------
+const qnorm = (s: unknown) => clean(s).replace(/["“”]/g, '');
+
+async function syncPostAssessments(token: string, admin: SupabaseClient, runId: number) {
+  const [{ data: questions }, { data: rounds }] = await Promise.all([
+    admin.from('assessment_questions').select('no, kind, question'),
+    admin.from('rounds').select('id, number, post_sheet_id')
+      .in('post_source', ['sheet', 'sheet_once']).not('post_sheet_id', 'is', null).order('number'),
+  ]);
+  const byText = new Map((questions ?? []).map((q: { no: number; kind: string; question: string }) => [qnorm(q.question), q]));
+  const errors: string[] = [];
+  let matched = 0;
+  for (const round of rounds ?? []) {
+    const label = `Post assessment R_${String(round.number).padStart(2, '0')}`;
+    try {
+      const tabs = [...await sheetTabs(round.post_sheet_id, token, label)].filter((t) => t !== 'Reference');
+      const ranges = await batchGet(round.post_sheet_id, token, tabs.map((t) => `'${t}'!A1:AL`));
+      const rows: unknown[] = [];
+      tabs.forEach((tab, ti) => {
+        const [header = [], ...data] = ranges[ti];
+        const quizCol: number[] = [];
+        const surveyCol = new Map<number, number>();
+        header.forEach((h, i) => {
+          const q = byText.get(qnorm(h));
+          if (q?.kind === 'quiz' && quizCol[q.no - 1] === undefined) quizCol[q.no - 1] = i;
+          if (q?.kind === 'survey' && !surveyCol.has(q.no)) surveyCol.set(q.no, i);
+        });
+        if (quizCol.filter((c) => c !== undefined).length < 9) return;
+        const col = (test: (h: string) => boolean) => header.findIndex((h) => test(clean(h)));
+        const c = {
+          name: col((h) => h.startsWith('الاسم رباعي')),
+          phone: col((h) => h.includes('رقم الهاتف')),
+          nid: col((h) => h.includes('الرقم القومي')),
+          kobo: col((h) => /^ko[pb]o code/i.test(h)),
+          ts: col((h) => h === 'Timestamp'),
+          total: col((h) => h === 'Total Score'),
+          pass: col((h) => h === 'Pass/Not'),
+        };
+        const at = (row: string[], i: number) => (i >= 0 ? row[i] : '');
+        data.forEach((row, i) => {
+          const name = clean(at(row, c.name));
+          const quiz = quizCol.map((q) => clean(row[q]));
+          if (!name || name.startsWith('#') || quiz.every((a) => !a)) return;
+          const pass = clean(at(row, c.pass)).toLowerCase();
+          rows.push({
+            tab,
+            sheet_row: i + 2,
+            submitted_at: sheetTimestamp(at(row, c.ts)),
+            name,
+            phone: normPhone(at(row, c.phone)) ?? null,
+            national_id: normNid(at(row, c.nid)),
+            kobo: clean(at(row, c.kobo)),
+            quiz,
+            survey: Object.fromEntries([...surveyCol].map(([no, q]) => [no, clean(row[q])]).filter(([, v]) => v)),
+            sheet_score: toSmall(at(row, c.total)),
+            sheet_passed: pass ? pass === 'pass' : null,
+          });
+        });
+      });
+      const { data, error } = await admin.rpc('sync_post_assessment', {
+        p_run: runId, p_round: round.id, p_label: label, rows,
+      });
+      if (error) throw new Error(error.message);
+      matched += data?.matched ?? 0;
+    } catch (e) {
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { matched, errors };
+}
+
+// ---------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------
 Deno.serve(async (req) => {
@@ -470,6 +549,8 @@ Deno.serve(async (req) => {
     // Phase 3 after phase 2; one round's problem doesn't stop the others
     const attendance = await syncAttendance(token, admin, runId);
     problems.push(...attendance.errors);
+    const post = await syncPostAssessments(token, admin, runId);
+    problems.push(...post.errors);
 
     const error = problems.length ? problems.join(' | ') : null;
     await admin.rpc('sync_finish', {
@@ -478,7 +559,7 @@ Deno.serve(async (req) => {
     });
     return json({
       run: runId, rows_read: rowsRead, rows_new: rowsNew, rows_failed: rowsFailed, profiles_new: profilesNew,
-      attendance_rows: attendance.matched, error,
+      attendance_rows: attendance.matched, post_assessments: post.matched, error,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
